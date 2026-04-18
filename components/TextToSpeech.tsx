@@ -295,8 +295,8 @@ export default function TextToSpeech() {
   }, [progress.chunks, isBusy, elapsedMs]);
 
   return (
-    <div className="grid lg:grid-cols-[1fr_300px] gap-4 md:gap-5 h-full min-h-0">
-      <div className="card p-0 overflow-hidden flex flex-col min-h-0 lg:h-full">
+    <div className="grid lg:grid-cols-[1fr_300px] gap-4 md:gap-5 lg:min-h-full">
+      <div className="card p-0 flex flex-col lg:min-h-full">
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-white/5">
           <div className="flex items-center gap-2">
             <Wand2 className="h-4 w-4 text-ink-300" />

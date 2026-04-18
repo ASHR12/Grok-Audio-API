@@ -33,7 +33,7 @@ export default function VoiceStudio() {
   }, [mode]);
 
   return (
-    <main className="h-screen mx-auto max-w-6xl px-4 md:px-6 py-4 md:py-5 flex flex-col overflow-hidden">
+    <main className="min-h-screen mx-auto max-w-6xl px-4 md:px-6 py-4 md:py-5 flex flex-col">
       <Header mode={mode} onModeChange={setMode} />
       <section className="mt-4 md:mt-5 flex-1 min-h-0">
         {mode === "stt" ? <SpeechToText /> : <TextToSpeech />}
