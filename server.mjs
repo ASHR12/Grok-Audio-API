@@ -9,6 +9,7 @@ import next from "next";
 import { WebSocketServer, WebSocket } from "ws";
 import { randomUUID } from "node:crypto";
 import { readFileSync, existsSync } from "node:fs";
+import { RtcRelay } from "./lib/rtc-relay.mjs";
 
 // Minimal .env / .env.local loader so we don't need an extra dependency.
 function loadEnvFile(path) {
@@ -55,6 +56,14 @@ const upgradeHandler =
 
 const STT_UPSTREAM = "wss://api.x.ai/v1/stt";
 const TTS_UPSTREAM = "wss://api.x.ai/v1/tts";
+
+// WebRTC relay for the Voice Agent mode. Bridges browser WebRTC
+// DataChannel ⇄ xAI realtime WebSocket.
+const rtcRelay = new RtcRelay({
+  apiKey: XAI_API_KEY,
+  model: process.env.XAI_REALTIME_MODEL,
+  verbose: process.env.VOICE_DEBUG === "1" || process.env.NODE_ENV !== "production",
+});
 
 /**
  * Pipe a client WebSocket ⇄ xAI upstream WebSocket both ways.
@@ -203,10 +212,71 @@ function bridge(clientWs, upstreamUrl, logTag) {
 
 await app.prepare();
 
-const server = createServer((req, res) => {
+const server = createServer(async (req, res) => {
   const parsed = parse(req.url, true);
+
+  // WebRTC signalling endpoint — accepts SDP offer, returns SDP answer.
+  // POST /api/rtc/offer  { sdp: "...", model?: "grok-voice-think-fast-1.0" }
+  if (req.method === "POST" && parsed.pathname === "/api/rtc/offer") {
+    try {
+      const body = await readJsonBody(req);
+      if (!body || typeof body.sdp !== "string") {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "missing sdp" }));
+        return;
+      }
+      const { sessionId, sdp, type } = await rtcRelay.handleOffer(body.sdp, {
+        model: body.model,
+      });
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ sessionId, type, sdp }));
+    } catch (err) {
+      console.error("[rtc] offer error:", err);
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({ error: err?.message || "offer failed" })
+      );
+    }
+    return;
+  }
+
+  if (
+    req.method === "DELETE" &&
+    parsed.pathname &&
+    parsed.pathname.startsWith("/api/rtc/session/")
+  ) {
+    const id = parsed.pathname.slice("/api/rtc/session/".length);
+    rtcRelay.closeSession(id);
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
   handle(req, res, parsed);
 });
+
+async function readJsonBody(req) {
+  return new Promise((resolve, reject) => {
+    let raw = "";
+    req.setEncoding("utf8");
+    req.on("data", (chunk) => {
+      raw += chunk;
+      if (raw.length > 1_000_000) {
+        reject(new Error("body too large"));
+        req.destroy();
+      }
+    });
+    req.on("end", () => {
+      if (!raw) return resolve(null);
+      try {
+        resolve(JSON.parse(raw));
+      } catch (e) {
+        reject(new Error("invalid JSON"));
+      }
+    });
+    req.on("error", reject);
+  });
+}
 
 // Separate WebSocket servers for each proxy route (easier per-route logic).
 const sttWss = new WebSocketServer({ noServer: true });
@@ -273,6 +343,19 @@ server.listen(port, () => {
     `\n\x1b[32m▲\x1b[0m Grok Voice Studio ready → \x1b[36mhttp://${hostname}:${port}\x1b[0m`
   );
   console.log(
-    `  \x1b[2mWebSocket proxies: /api/ws/stt  ·  /api/ws/tts\x1b[0m\n`
+    `  \x1b[2mWebSocket proxies: /api/ws/stt  ·  /api/ws/tts\x1b[0m`
+  );
+  console.log(
+    `  \x1b[2mWebRTC agent relay:  /api/rtc/offer  (POST)\x1b[0m\n`
   );
 });
+
+const shutdown = (signal) => {
+  console.log(`\n[${signal}] shutting down — closing RTC sessions`);
+  try {
+    rtcRelay.closeAll();
+  } catch {}
+  process.exit(0);
+};
+process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => shutdown("SIGTERM"));

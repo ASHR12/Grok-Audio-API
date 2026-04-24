@@ -1,12 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Mic, AudioWaveform } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Mic, AudioWaveform, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import SpeechToText from "./SpeechToText";
 import TextToSpeech from "./TextToSpeech";
+import VoiceAgent from "./VoiceAgent";
 
-type Mode = "stt" | "tts";
+type Mode = "stt" | "tts" | "agent";
+
+const MODES: Mode[] = ["stt", "tts", "agent"];
 
 export default function VoiceStudio() {
   const [mode, setMode] = useState<Mode>("stt");
@@ -15,17 +18,18 @@ export default function VoiceStudio() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     const hash = window.location.hash.replace("#", "");
-    if (hash.startsWith("tts")) setMode("tts");
+    if (hash.startsWith("agent")) setMode("agent");
+    else if (hash.startsWith("tts")) setMode("tts");
     else if (hash.startsWith("stt")) setMode("stt");
   }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     const url = new URL(window.location.href);
-    // Only rewrite the hash if we're not inside a sub-route (e.g. #stt/upload)
     if (
       !window.location.hash.startsWith("#stt/") &&
-      !window.location.hash.startsWith("#tts/")
+      !window.location.hash.startsWith("#tts/") &&
+      !window.location.hash.startsWith("#agent/")
     ) {
       url.hash = mode;
       window.history.replaceState(null, "", url.toString());
@@ -36,7 +40,9 @@ export default function VoiceStudio() {
     <main className="min-h-screen mx-auto max-w-6xl px-4 md:px-6 py-4 md:py-5 flex flex-col">
       <Header mode={mode} onModeChange={setMode} />
       <section className="mt-4 md:mt-5 flex-1 min-h-0">
-        {mode === "stt" ? <SpeechToText /> : <TextToSpeech />}
+        {mode === "stt" && <SpeechToText />}
+        {mode === "tts" && <TextToSpeech />}
+        {mode === "agent" && <VoiceAgent />}
       </section>
       <Footer />
     </main>
@@ -62,7 +68,7 @@ function Header({
             Grok Voice Studio
           </h1>
           <p className="text-[11px] md:text-xs text-ink-300">
-            Realtime STT & TTS over WebSocket · powered by{" "}
+            STT · TTS · Realtime Voice Agent · powered by{" "}
             <span className="text-ink-100 font-medium">xAI Grok</span>
           </p>
         </div>
@@ -80,37 +86,82 @@ function ModeToggle({
   mode: Mode;
   onChange: (m: Mode) => void;
 }) {
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const btnRefs = useRef<Record<Mode, HTMLButtonElement | null>>({
+    stt: null,
+    tts: null,
+    agent: null,
+  });
+  const [pill, setPill] = useState<{ left: number; width: number } | null>(
+    null
+  );
+
+  useEffect(() => {
+    const measure = () => {
+      const container = listRef.current;
+      const active = btnRefs.current[mode];
+      if (!container || !active) return;
+      const cr = container.getBoundingClientRect();
+      const br = active.getBoundingClientRect();
+      setPill({ left: br.left - cr.left, width: br.width });
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [mode]);
+
   return (
     <div
+      ref={listRef}
       role="tablist"
       aria-label="Mode"
-      className="relative glass rounded-xl p-1 flex items-center gap-1"
+      className="relative glass rounded-xl p-1 flex items-center gap-0.5"
     >
-      <span
-        aria-hidden
-        className={cn(
-          "absolute top-1 bottom-1 rounded-lg transition-transform duration-300 ease-out",
-          "bg-accent-lime shadow-[0_6px_20px_-6px_rgba(201,242,108,0.6)]",
-          "w-[calc(50%-0.125rem)]",
-          mode === "stt"
-            ? "translate-x-0"
-            : "translate-x-[calc(100%+0.25rem)]"
-        )}
-      />
-      <ModeTab
-        active={mode === "stt"}
-        onClick={() => onChange("stt")}
-        icon={<Mic className="h-3.5 w-3.5" />}
-        label="Speech → Text"
-      />
-      <ModeTab
-        active={mode === "tts"}
-        onClick={() => onChange("tts")}
-        icon={<AudioWaveform className="h-3.5 w-3.5" />}
-        label="Text → Speech"
-      />
+      {pill && (
+        <span
+          aria-hidden
+          className={cn(
+            "absolute top-1 bottom-1 rounded-lg transition-all duration-300 ease-out",
+            "bg-accent-lime shadow-[0_6px_20px_-6px_rgba(201,242,108,0.6)]"
+          )}
+          style={{
+            transform: `translateX(${pill.left - 4}px)`,
+            width: pill.width,
+          }}
+        />
+      )}
+      {MODES.map((m) => (
+        <ModeTab
+          key={m}
+          buttonRef={(el) => (btnRefs.current[m] = el)}
+          active={mode === m}
+          onClick={() => onChange(m)}
+          icon={iconFor(m)}
+          label={labelFor(m)}
+          shortLabel={shortLabelFor(m)}
+          tag={m === "agent" ? "new" : undefined}
+        />
+      ))}
     </div>
   );
+}
+
+function iconFor(m: Mode) {
+  if (m === "stt") return <Mic className="h-3.5 w-3.5" />;
+  if (m === "tts") return <AudioWaveform className="h-3.5 w-3.5" />;
+  return <Sparkles className="h-3.5 w-3.5" />;
+}
+
+function labelFor(m: Mode) {
+  if (m === "stt") return "Speech → Text";
+  if (m === "tts") return "Text → Speech";
+  return "Voice Agent";
+}
+
+function shortLabelFor(m: Mode) {
+  if (m === "stt") return "STT";
+  if (m === "tts") return "TTS";
+  return "Agent";
 }
 
 function ModeTab({
@@ -118,14 +169,21 @@ function ModeTab({
   onClick,
   icon,
   label,
+  shortLabel,
+  tag,
+  buttonRef,
 }: {
   active: boolean;
   onClick: () => void;
   icon: React.ReactNode;
   label: string;
+  shortLabel: string;
+  tag?: "new";
+  buttonRef?: (el: HTMLButtonElement | null) => void;
 }) {
   return (
     <button
+      ref={buttonRef}
       role="tab"
       aria-selected={active}
       onClick={onClick}
@@ -137,7 +195,12 @@ function ModeTab({
     >
       {icon}
       <span className="hidden sm:inline">{label}</span>
-      <span className="sm:hidden">{label.split(" ").pop()}</span>
+      <span className="sm:hidden">{shortLabel}</span>
+      {tag === "new" && !active && (
+        <span className="text-[9px] uppercase tracking-wider px-1 py-0.5 rounded-sm bg-accent-lime/15 text-lime-200 font-semibold">
+          new
+        </span>
+      )}
     </button>
   );
 }
